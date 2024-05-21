@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -34,7 +34,7 @@ type Signal struct {
 
 type Sms struct {
 	SrcPhone string
-	Message string
+	Message  string
 }
 
 const (
@@ -46,6 +46,31 @@ const (
 var (
 	match_crnl = regexp.MustCompile(`[\r\n]+`)
 	match_ok   = regexp.MustCompile(`\n+OK`)
+	sensors    = []string{
+		"soc_max",
+		"cpu_little0",
+		"cpu_little1",
+		"cpu_little2",
+		"cpu_little3",
+		"gpu0",
+		"gpu1",
+		"dramc",
+		"mmsys",
+		"md_5g",
+		"md_4g",
+		"md_3g",
+		"soc_dram_ntc",
+		"ltepa_ntc",
+		"nrpa_ntc",
+		"rf_ntc",
+		"md_rf",
+		"conn_gps",
+		"pmic",
+		"pmic_vcore",
+		"pmic_vproc",
+		"pmic_vgpu",
+		"unknown",
+	}
 	debug bool
 )
 
@@ -154,7 +179,6 @@ func (m *Modem) sendex(command, expect string, keepOk bool) string {
 	}
 	return res
 }
-
 
 func (m *Modem) Close() {
 	m.port.Close()
@@ -274,7 +298,6 @@ func (m *Modem) SignalInfo() Signal {
 		signal.SsRsrq = 0
 	}
 
-
 	// synchronization signal based reference signal received power
 	signal.SsRsrp = atoi(info[7])
 	if signal.SsRsrp < 128 {
@@ -380,14 +403,14 @@ func (m *Modem) SetRoute4(netdev string) {
 			continue
 		}
 
-			gw := addr.IP[:]
-			gw[3] = byte(1)
-			route := netlink.Route{LinkIndex: link.Attrs().Index, Dst: nil, Gw: gw}
-			err = netlink.RouteAdd(&route)
-			if err != nil {
-				log.Fatal("Failed to add route:", err)
-			}
-			log.Println("Added route to gw: ", gw)
+		gw := addr.IP[:]
+		gw[3] = byte(1)
+		route := netlink.Route{LinkIndex: link.Attrs().Index, Dst: nil, Gw: gw}
+		err = netlink.RouteAdd(&route)
+		if err != nil {
+			log.Fatal("Failed to add route:", err)
+		}
+		log.Println("Added route to gw: ", gw)
 	}
 }
 
@@ -422,15 +445,15 @@ func (m *Modem) ModemInfo(asJson bool) {
 
 	if asJson {
 		obj := map[string]interface{}{
-			"firmware": firmware,
+			"firmware":     firmware,
 			"serialnumber": serialnum,
-			"version": version,
-			"imei": imei,
-			"has_sim": hasSim,
-			"net_status": netstat,
-			"signal": signal,
+			"version":      version,
+			"imei":         imei,
+			"has_sim":      hasSim,
+			"net_status":   netstat,
+			"signal":       signal,
 		}
-		s, _:= json.Marshal(obj)
+		s, _ := json.Marshal(obj)
 		fmt.Println(string(s))
 	} else {
 		log.Printf("Firmware:   %s\n", firmware)
@@ -438,7 +461,7 @@ func (m *Modem) ModemInfo(asJson bool) {
 		log.Printf("Version:    %s\n", version)
 		log.Printf("IMEI:       %s\n", imei)
 		log.Printf("Has SIM:    %v\n", hasSim)
-		switch(netstat) {
+		switch netstat {
 		case NET_NOT_REGISTERED:
 			log.Printf("Net Type:   Not connected\n")
 		case NET_REGISTERED_4G:
@@ -447,7 +470,132 @@ func (m *Modem) ModemInfo(asJson bool) {
 			log.Printf("Net Type:   5G\n")
 		}
 		log.Printf("Operator:   %s\n", operator)
-		log.Printf("Signal:     %d dBm (q:%.1f, n:%.1f dB)\n",signal.SsRsrp, signal.SsRsrq, signal.SsRinr)
+		log.Printf("Signal:     %d dBm (q:%.1f, n:%.1f dB)\n", signal.SsRsrp, signal.SsRsrq, signal.SsRinr)
+	}
+}
+
+func (m *Modem) SetBands() {
+	m.sendex(`AT+EPBSEH="FF","FFFF","ffffffff","ffffffffffffffff"`, "+CIREPI", false)
+	time.Sleep(time.Second * 5)
+}
+
+func ratAsString(rat string) string {
+	irat := atoi(rat)
+	switch irat {
+	case 1:
+		return "UMTS (1)"
+	case 2:
+		return "LTE (2)"
+	case 4:
+		return "LTE/UMTS (4)"
+	case 10:
+		return "Automatic (10)"
+	case 14:
+		return "NR-RAN (14)"
+	case 16:
+		return "NR-RAN/WCDMA (16)"
+	case 17:
+		return "NR-RAN/LTE (17)"
+	case 20:
+		return "NR-RAN/WCDMA/LTE (20)"
+	default:
+		return fmt.Sprintf("Unknown (%d)", irat)
+	}
+}
+
+func preferredActAsString(preferred string) string {
+	iPrefAct := atoi(preferred)
+	switch iPrefAct {
+	case 2:
+		return "WCDMA (2)"
+	case 3:
+		return "LTE (3)"
+	case 6:
+		return "NR-RAN (6)"
+	default:
+		return fmt.Sprintf("Unknown (%d)", iPrefAct)
+	}
+}
+
+func bandAsString(sband string) string {
+	band := atoi(sband)
+	if band >= 1 && band <= 10 {
+		return fmt.Sprintf("UMTS_%d", band)
+	} else if band >= 101 && band <= 171 {
+		return fmt.Sprintf("LTE_%d", band-100)
+	} else if band >= 501 && band <= 509 {
+		return fmt.Sprintf("NR_%d", band-500)
+	} else if band >= 5010 && band <= 5099 {
+		return fmt.Sprintf("NR_%d", band-5000)
+	} else if band >= 50100 && band <= 50512 {
+		return fmt.Sprintf("NR_%d", band-50000)
+	}
+	return fmt.Sprintf("%d", band)
+}
+
+func (m *Modem) ModemBands(asJson bool) {
+	obj := map[string]interface{}{}
+	bnds := []string{}
+	bands := strings.Split(m.sendex(`AT+GTACT?`, "+GTACT: ", false), `,`)
+	rat := ratAsString(bands[0])
+	pref1 := preferredActAsString(bands[1])
+	pref2 := preferredActAsString(bands[2])
+	if !asJson {
+		log.Printf("RAT: %s\n", rat)
+		log.Printf("Preferred Act 1: %s\n", pref1)
+		log.Printf("Preferred Act 2: %s\n", pref2)
+	}
+
+	for i, band := range bands {
+		if i < 3 {
+			continue
+		}
+		bnds = append(bnds, bandAsString(band))
+	}
+
+	if asJson {
+		obj["rat"] = rat
+		obj["preferred_act1"] = pref1
+		obj["preferred_act2"] = pref2
+		obj["bands"] = bnds
+		s, _ := json.Marshal(obj)
+		fmt.Println(string(s))
+	} else {
+		log.Printf("Bands: %v\n", bnds)
+	}
+}
+
+func (m *Modem) ModemTemperature(asJson bool) {
+	obj := map[string]interface{}{}
+	lines := strings.Split(m.send("AT+GTSENRDTEMP=0", false), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "+GTSENRDTEMP: ") {
+			if !asJson {
+				log.Println("Bad response:", line)
+			}
+			continue
+		}
+		toks := strings.Split(line[14:], ",")
+		index := atoi(toks[0]) - 1
+		if index < 0 || index >= len(sensors) {
+			if !asJson {
+				log.Println("Bad index", index, line)
+			}
+			continue
+		}
+		temp := atof(toks[1]) / 1000.
+		sensor := sensors[index]
+		if asJson {
+			obj[sensor] = temp
+		} else {
+			log.Printf("%-13s %.3f\n", sensor+":", temp)
+		}
+	}
+
+	if asJson {
+		s, _ := json.Marshal(obj)
+		fmt.Println(string(s))
 	}
 }
 
@@ -481,7 +629,7 @@ func decodeSms(hexstr string) *Sms {
 
 	return &Sms{
 		SrcPhone: pdu.OA.Number(),
-		Message: string(msg),
+		Message:  string(msg),
 	}
 }
 
@@ -505,14 +653,14 @@ func (m *Modem) SmsList(asJson bool) {
 	}
 
 	if asJson {
-		s, _:= json.Marshal(messages)
+		s, _ := json.Marshal(messages)
 		fmt.Println(string(s))
 	}
 }
 
 func (m *Modem) plotSignal() {
 	if !m.IsConnected() {
-		log.Fatal("Modem is not connected!") 
+		log.Fatal("Modem is not connected!")
 	}
 	const datasize = 32
 	data := []float64{}
@@ -577,7 +725,7 @@ func findNetDev() string {
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	var restart, graph, smslist, connect, disconnect, info, dns, route, asJson bool
+	var restart, graph, smslist, connect, disconnect, info, dns, route, temp, bands, asJson bool
 	var baud, timeout, cid int
 	var serial, netdev, simpin, apn string
 	flag.IntVar(&baud, "baud", 115200, "Serial device baud rate")
@@ -595,13 +743,15 @@ func main() {
 	flag.BoolVar(&disconnect, "disconnect", false, "Disconnects the modem")
 	flag.BoolVar(&dns, "dns", false, "Prints the DNS configuration from the ISP.")
 	flag.BoolVar(&info, "info", false, "Prints the modem info")
-	flag.BoolVar(&asJson, "json", false, "Outputs in json format (info, dns, sms only).")
+	flag.BoolVar(&temp, "temp", false, "Prints the modem temperature info")
+	flag.BoolVar(&bands, "bands", false, "Prints the current modem bands")
+	flag.BoolVar(&asJson, "json", false, "Outputs in json format (info, temp, bands, dns, sms only).")
 	flag.BoolVar(&debug, "debug", false, "Prints all the AT commands")
 
 	flag.Parse()
 
-	if !restart && !graph && !smslist && !connect && !disconnect && !route && !dns && !info {
-		log.Fatal("requires a mode: graph | restart | sms | connect | disconnect | route | dns | info")
+	if !restart && !graph && !smslist && !connect && !disconnect && !route && !dns && !info && !temp && !bands {
+		log.Fatal("requires a mode: graph | restart | sms | connect | disconnect | route | dns | info | temp")
 		return
 	}
 
@@ -628,6 +778,16 @@ func main() {
 		return
 	}
 
+	if temp {
+		modem.ModemTemperature(asJson)
+		return
+	}
+
+	if bands {
+		modem.ModemBands(asJson)
+		return
+	}
+
 	if dns {
 		if !modem.IsConnected() {
 			log.Fatal("Modem needs to be connected to retrieve the DNS configuration.")
@@ -635,7 +795,7 @@ func main() {
 		}
 		dns := modem.DNS()
 		if asJson {
-			s, _:= json.Marshal(dns)
+			s, _ := json.Marshal(dns)
 			fmt.Println(string(s))
 		} else {
 			for _, ip := range dns {
