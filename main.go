@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/albenik/go-serial/v2"
+	"github.com/beevik/ntp"
 	tm "github.com/buger/goterm"
 	ag "github.com/guptarohit/asciigraph"
 	"github.com/vishvananda/netlink"
@@ -89,31 +91,31 @@ func atof(s string) float32 {
 	return float32(d)
 }
 
-func NewModem(device string, baud, timeout, cid int) *Modem {
-	if device == "" {
-		log.Fatal("missing -serial")
-	} else if baud < 1 {
-		log.Fatal("invalid -baud value")
-	} else if timeout < 1 {
-		log.Fatal("invalid -timeout value")
-	} else if cid < 1 {
-		log.Fatal("invalid -cid value")
+func NewModem(config *Config) *Modem {
+	if config.Serial == "" {
+		log.Fatal("missing serial")
+	} else if config.Baud < 1 {
+		log.Fatal("invalid baud value")
+	} else if config.Timeout < 1 {
+		log.Fatal("invalid timeout value")
+	} else if config.ContextId < 1 {
+		log.Fatal("invalid cid value")
 	}
 
-	port, err := serial.Open(device,
-		serial.WithBaudrate(baud),
+	port, err := serial.Open(config.Serial,
+		serial.WithBaudrate(config.Baud),
 		serial.WithDataBits(8),
 		serial.WithParity(serial.NoParity),
 		serial.WithStopBits(serial.OneStopBit),
-		serial.WithReadTimeout(timeout),
-		serial.WithWriteTimeout(timeout),
+		serial.WithReadTimeout(config.Timeout),
+		serial.WithWriteTimeout(config.Timeout),
 		serial.WithHUPCL(false),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	m := &Modem{port: port, cid: cid}
+	m := &Modem{port: port, cid: config.ContextId}
 
 	// flush buffer.
 	for {
@@ -722,24 +724,50 @@ func findNetDev() string {
 	return ""
 }
 
+func setSystemDate(ntpServer string) {
+	_, err := exec.LookPath("date")
+	if err != nil {
+		log.Fatal("Date binary not found, cannot set system date:", err)
+		return
+	}
+
+	response, err := ntp.Query(ntpServer)
+	if err != nil {
+		log.Fatal("Failed to query '"+ntpServer+"':", err)
+		return
+	}
+
+	date := time.Now().Add(response.ClockOffset).Format("2006-02-01 15:04:05")
+	args := []string{"--set", date}
+	err = exec.Command("date", args...).Run()
+	if err != nil {
+		log.Println("Failed to set system date:", err)
+	}
+	log.Println("System date updated to", date)
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	var restart, graph, smslist, connect, disconnect, info, dns, route, temp, bands, asJson bool
-	var baud, timeout, cid int
-	var serial, netdev, simpin, apn string
-	flag.IntVar(&baud, "baud", 115200, "Serial device baud rate")
-	flag.IntVar(&timeout, "timeout", 300, "Serial device timeout in milliseconds")
-	flag.IntVar(&cid, "cid", 5, "PDP context id.")
-	flag.StringVar(&serial, "serial", "", "Serial device to use (usually /dev/ttyUSB2 or /dev/ttyUSB4)")
-	flag.StringVar(&netdev, "netdev", findNetDev(), "Manually sets the net device to use")
-	flag.StringVar(&simpin, "simpin", "", "Sets the SIM card PIN number")
-	flag.StringVar(&apn, "apn", "", "Sets the APN")
+	var config = NewConfig()
+
+	var restart, graph, smslist, connect, disconnect, info, dns, temp, bands, asJson bool
+	var configPath string
+	flag.StringVar(&configPath, "config", "/etc/fm350/fm350.yaml", "path to yaml configuration")
+	flag.IntVar(&config.Baud, "baud", config.Baud, "Serial device baud rate")
+	flag.IntVar(&config.Timeout, "timeout", config.Timeout, "Serial device timeout in milliseconds")
+	flag.IntVar(&config.ContextId, "cid", config.ContextId, "PDP context id.")
+	flag.StringVar(&config.Serial, "serial", config.Serial, "Serial device to use (usually /dev/ttyUSB2 or /dev/ttyUSB4)")
+	flag.StringVar(&config.Netdev, "netdev", config.Netdev, "Manually sets the net device to use")
+	flag.StringVar(&config.SimPin, "simpin", config.SimPin, "Sets the SIM card PIN number")
+	flag.StringVar(&config.Apn, "apn", config.Apn, "Sets the APN")
+	flag.StringVar(&config.Ntp, "ntp", config.Ntp, "Updates the time using the defined ntp server")
+	flag.BoolVar(&config.Route, "route", config.Route, "Add default route via modem")
+
 	flag.BoolVar(&graph, "graph", false, "Shows signal graph")
 	flag.BoolVar(&restart, "restart", false, "Restarts the modem")
 	flag.BoolVar(&smslist, "sms", false, "Prints all the sms received")
 	flag.BoolVar(&connect, "connect", false, "Connects and sets up the modem")
-	flag.BoolVar(&route, "route", false, "Add default route via modem")
 	flag.BoolVar(&disconnect, "disconnect", false, "Disconnects the modem")
 	flag.BoolVar(&dns, "dns", false, "Prints the DNS configuration from the ISP.")
 	flag.BoolVar(&info, "info", false, "Prints the modem info")
@@ -750,12 +778,14 @@ func main() {
 
 	flag.Parse()
 
-	if !restart && !graph && !smslist && !connect && !disconnect && !route && !dns && !info && !temp && !bands {
-		log.Fatal("requires a mode: graph | restart | sms | connect | disconnect | route | dns | info | temp")
+	if !restart && !graph && !smslist && !connect && !disconnect && !dns && !info && !temp && !bands {
+		log.Fatal("requires a mode: graph | restart | sms | connect | disconnect | dns | info | temp")
 		return
 	}
 
-	modem := NewModem(serial, baud, timeout, cid)
+	config.Update(configPath)
+
+	modem := NewModem(config)
 	defer modem.Close()
 
 	if restart {
@@ -808,18 +838,18 @@ func main() {
 	if connect {
 		if !modem.IsConnected() {
 			if !modem.HasSimPIN() {
-				if simpin == "" {
+				if config.SimPin == "" {
 					log.Fatal("Modem requires SIM card PIN number.")
 				}
-				modem.SetSimPIN(simpin)
+				modem.SetSimPIN(config.SimPin)
 			}
-			if apn == "" {
+			if config.Apn == "" {
 				log.Fatal("Cannot connect without an apn.")
 				return
 			}
-			modem.SetAPN(apn)
+			modem.SetAPN(config.Apn)
 		}
-		modem.Connect(netdev, true)
+		modem.Connect(config.Netdev, true)
 	}
 
 	if disconnect {
@@ -827,10 +857,14 @@ func main() {
 			log.Fatal("Modem already disconnected.")
 			return
 		}
-		modem.Connect(netdev, false)
+		modem.Connect(config.Netdev, false)
 	}
 
-	if !disconnect && route {
-		modem.SetRoute4(netdev)
+	if !disconnect && config.Route {
+		modem.SetRoute4(config.Netdev)
+	}
+
+	if !disconnect && config.Ntp != "" {
+		setSystemDate(config.Ntp)
 	}
 }
