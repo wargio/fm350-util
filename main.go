@@ -370,6 +370,9 @@ func (m *Modem) SetupNetDev(link netlink.Link) {
 		if i < 1 {
 			continue
 		}
+		if strings.Trim(tok, `"`) == "" {
+			continue
+		}
 		ip := asIpAddr(tok, true)
 		addr, err := netlink.ParseAddr(ip)
 		if err != nil {
