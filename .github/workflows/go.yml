@@ -33,4 +33,4 @@ jobs:
       - name: Download go deps
         run: go mod download
       - name: Build the Go binary
-        run: go build -v
+        run: CGO_ENABLED=0 go build -v
