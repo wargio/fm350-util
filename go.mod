@@ -6,7 +6,7 @@ require (
 	github.com/albenik/go-serial/v2 v2.6.1
 	github.com/beevik/ntp v1.5.0
 	github.com/buger/goterm v1.0.4
-	github.com/guptarohit/asciigraph v0.8.1
+	github.com/guptarohit/asciigraph v0.9.0
 	github.com/vishvananda/netlink v1.3.1
 	github.com/warthog618/sms v0.3.0
 	gopkg.in/yaml.v3 v3.0.1
